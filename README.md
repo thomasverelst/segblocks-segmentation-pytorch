@@ -97,6 +97,7 @@ Train a baseline model:
 
 More configs (EfficientNet backbone) coming later.
 
-
+## SegBlocks block-based networks code
+The code to run networks in blocks can be found in `./segblocks/` with some examples on how to use this (e.g. on ResNet) in `./segblocks/examples/`
 
 
