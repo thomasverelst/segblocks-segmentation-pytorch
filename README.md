@@ -65,23 +65,23 @@ and unpack the zip in the code root so that the folder structure becomes
 
 #### REINFORCE 40% policy
 
-Validation (accuracy and FLOPS/GMACS):
+For validation (accuracy and FLOPS/GMACS), run the following shell script:
 
-    configs/cityscapes/swiftnet_rn18/reinforce40_val.sh
+    ./configs/cityscapes/swiftnet_rn18/reinforce40_val.sh
 
-FPS 
+FPS :
 
-    configs/cityscapes/swiftnet_rn18/reinforce40_speed.sh
+    ./configs/cityscapes/swiftnet_rn18/reinforce40_speed.sh
 
 #### baseline
 
 Validation (accuracy and FLOPS/GMACS):
 
-    configs/cityscapes/swiftnet_rn18/baseline_val.sh
+    ./configs/cityscapes/swiftnet_rn18/baseline_val.sh
 
-FPS 
+FPS:
 
-    configs/cityscapes/swiftnet_rn18/baseline_speed.sh
+    ./configs/cityscapes/swiftnet_rn18/baseline_speed.sh
 
 ## Training, validation and FPS benchmark
 
