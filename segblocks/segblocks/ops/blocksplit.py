@@ -3,15 +3,22 @@ from typing import Tuple
 import torch
 from torch.autograd import Function
 
-from .util import (DTYPES_FLOAT, Dtype, Stream, _kernel_header_blocks,
-                   assertcuda, get_threads_and_blocks, load_kernel)
+from .util import DTYPES_FLOAT, Dtype, Stream, _kernel_header_blocks, assertcuda, get_threads_and_blocks, load_kernel
 
 
 class SplitFunction(Function):
     @staticmethod
-    def forward(ctx, x: torch.Tensor, data_hr: torch.Tensor, data_lr: torch.Tensor, 
-                map_hr: torch.Tensor, map_lr: torch.Tensor, block_idx: torch.Tensor, 
-                block_size: int , lowres_factor: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        ctx,
+        x: torch.Tensor,
+        data_hr: torch.Tensor,
+        data_lr: torch.Tensor,
+        map_hr: torch.Tensor,
+        map_lr: torch.Tensor,
+        block_idx: torch.Tensor,
+        block_size: int,
+        lowres_factor: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         assert assertcuda(x, dtypes=x.dtype)
         assert assertcuda(data_hr, dtypes=x.dtype)
         assert assertcuda(data_lr, dtypes=x.dtype)
@@ -20,27 +27,45 @@ class SplitFunction(Function):
         assert assertcuda(block_idx, dtypes=torch.int32)
 
         assert data_hr.shape[2:] == (block_size, block_size)
-        assert data_lr.shape[2:] == (block_size//lowres_factor, block_size//lowres_factor)
+        assert data_lr.shape[2:] == (block_size // lowres_factor, block_size // lowres_factor)
         assert len(data_hr) >= len(map_hr)
         assert len(data_lr) >= len(map_lr)
         assert len(map_hr) + len(map_lr) == block_idx.numel()
 
         N, C, H, W = x.shape
-        npixels_high = len(map_hr) * block_size ** 2
-        npixels_low = len(map_lr) * (block_size//lowres_factor) ** 2
+        npixels_high = len(map_hr) * block_size**2
+        npixels_low = len(map_lr) * (block_size // lowres_factor) ** 2
         npixels = npixels_high + npixels_low
 
         block, grid = get_threads_and_blocks(npixels, C)
 
-        f = load_kernel('split_kernel', _split_kernel, dtype=Dtype(x),
-                batch_size=N, channels=C, height=H, width=W,
-                block_size=block_size, lowres_factor=lowres_factor, do_avg=int(True))
-        f(block=block, grid=grid,
+        f = load_kernel(
+            "split_kernel",
+            _split_kernel,
+            dtype=Dtype(x),
+            batch_size=N,
+            channels=C,
+            height=H,
+            width=W,
+            block_size=block_size,
+            lowres_factor=lowres_factor,
+            do_avg=int(True),
+        )
+        f(
+            block=block,
+            grid=grid,
             args=[
-                x.data_ptr(), data_hr.data_ptr(), data_lr.data_ptr(), 
-                map_hr.data_ptr(), map_lr.data_ptr(),
-                block_idx.data_ptr(), int(npixels_high), int(npixels_low),
-            ],stream=Stream(ptr=torch.cuda.current_stream().cuda_stream))
+                x.data_ptr(),
+                data_hr.data_ptr(),
+                data_lr.data_ptr(),
+                map_hr.data_ptr(),
+                map_lr.data_ptr(),
+                block_idx.data_ptr(),
+                int(npixels_high),
+                int(npixels_low),
+            ],
+            stream=Stream(ptr=torch.cuda.current_stream().cuda_stream),
+        )
 
         ctx.save_for_backward(block_idx)
         ctx.block_size = block_size
@@ -56,28 +81,40 @@ class SplitFunction(Function):
         assert assertcuda(grad_hr, dtypes=DTYPES_FLOAT)
         assert assertcuda(grad_lr, dtypes=DTYPES_FLOAT)
 
-        assert len(grad_hr) == 0 or grad_hr.shape[2:] == (ctx.block_size,)*2
-        assert len(grad_lr)  == 0 or grad_lr.shape[2:] == (ctx.block_size//ctx.lowres_factor,)*2
+        assert len(grad_hr) == 0 or grad_hr.shape[2:] == (ctx.block_size,) * 2
+        assert len(grad_lr) == 0 or grad_lr.shape[2:] == (ctx.block_size // ctx.lowres_factor,) * 2
 
-        N,C,H,W = ctx.NCHW
-        x = torch.zeros((N,C,H,W), device='cuda', dtype=grad_hr.dtype)
-        npixels = N*H*W
+        N, C, H, W = ctx.NCHW
+        x = torch.zeros((N, C, H, W), device="cuda", dtype=grad_hr.dtype)
+        npixels = N * H * W
 
         block, grid = get_threads_and_blocks(npixels, C)
 
-        f = load_kernel('split_kernel_backward', _split_kernel_backward, dtype=Dtype(grad_hr),
-                 batch_size=N, channels=C, height=H, width=W, 
-                block_size=ctx.block_size, lowres_factor=ctx.lowres_factor, do_avg=int(True))
-        f(block=block, grid=grid,
-            args=[
-                x.data_ptr(), grad_hr.data_ptr(), grad_lr.data_ptr(), 
-                block_idx.data_ptr(), int(npixels)
-            ],
-            stream=Stream(ptr=torch.cuda.current_stream().cuda_stream))
+        f = load_kernel(
+            "split_kernel_backward",
+            _split_kernel_backward,
+            dtype=Dtype(grad_hr),
+            batch_size=N,
+            channels=C,
+            height=H,
+            width=W,
+            block_size=ctx.block_size,
+            lowres_factor=ctx.lowres_factor,
+            do_avg=int(True),
+        )
+        f(
+            block=block,
+            grid=grid,
+            args=[x.data_ptr(), grad_hr.data_ptr(), grad_lr.data_ptr(), block_idx.data_ptr(), int(npixels)],
+            stream=Stream(ptr=torch.cuda.current_stream().cuda_stream),
+        )
 
         return x, None, None, None, None, None, None, None
 
-_split_kernel = _kernel_header_blocks+'''
+
+_split_kernel = (
+    _kernel_header_blocks
+    + """
 #define WIDTH ${width}
 #define HEIGHT ${height}
 #define DO_AVG ${do_avg}
@@ -141,9 +178,12 @@ CUDA_KERNEL_LOOP(i, npixels_high + npixels_low){
     }
 } // close kernel loop
 } // close kernel
-'''
+"""
+)
 
-_split_kernel_backward = _kernel_header_blocks+'''
+_split_kernel_backward = (
+    _kernel_header_blocks
+    + """
 #define WIDTH ${width}
 #define HEIGHT ${height}
 
@@ -185,4 +225,5 @@ CUDA_KERNEL_LOOP(i, npixels){
     }
 } // close kernel loop
 } // close kernel
-'''
+"""
+)

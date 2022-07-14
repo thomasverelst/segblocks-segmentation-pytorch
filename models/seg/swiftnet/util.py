@@ -1,3 +1,4 @@
+# swiftnet from https://github.com/orsic/swiftnet
 import warnings
 
 import torch
@@ -5,15 +6,17 @@ import torch.nn.functional as F
 from torch import nn as nn
 from utils.logger import logger
 
-upsample = lambda x, size: F.interpolate(x, size, mode='bilinear')
-BN_MOMENTUM = 0.02
+upsample = lambda x, size: F.interpolate(x, size, mode="bilinear")
+BN_MOMENTUM = 0.01
+
 
 class SeparableConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=False):
         super(SeparableConv2d, self).__init__()
 
-        self.conv1 = nn.Conv2d(in_channels, in_channels, kernel_size, stride, padding, dilation, groups=in_channels,
-                               bias=bias)
+        self.conv1 = nn.Conv2d(
+            in_channels, in_channels, kernel_size, stride, padding, dilation, groups=in_channels, bias=bias
+        )
         self.pointwise = nn.Conv2d(in_channels, out_channels, 1, 1, 0, 1, 1, bias=bias)
 
     def forward(self, x):
@@ -23,35 +26,58 @@ class SeparableConv2d(nn.Module):
 
 
 class _BNReluConv(nn.Sequential):
-    def __init__(self, num_maps_in, num_maps_out, k=3, batch_norm=True, bn_momentum=BN_MOMENTUM, bias=False, dilation=1,
-                 drop_rate=.0, separable=False):
+    def __init__(
+        self,
+        num_maps_in,
+        num_maps_out,
+        k=3,
+        batch_norm=True,
+        bn_momentum=BN_MOMENTUM,
+        bias=False,
+        dilation=1,
+        drop_rate=0.0,
+        separable=False,
+    ):
         super(_BNReluConv, self).__init__()
         if batch_norm:
-            self.add_module('norm', nn.BatchNorm2d(num_maps_in, momentum=bn_momentum))
-        self.add_module('relu', nn.ReLU(inplace=False))
+            self.add_module("norm", nn.BatchNorm2d(num_maps_in, momentum=bn_momentum))
+        self.add_module("relu", nn.ReLU(inplace=False))
         padding = k // 2
         conv_class = SeparableConv2d if separable else nn.Conv2d
-        logger.info(f'Using conv type {k}x{k}: {conv_class}')
-        self.add_module('conv', conv_class(num_maps_in, num_maps_out, kernel_size=k, padding=padding, bias=bias,
-                                           dilation=dilation))
+        logger.info(f"Using conv type {k}x{k}: {conv_class}")
+        self.add_module(
+            "conv", conv_class(num_maps_in, num_maps_out, kernel_size=k, padding=padding, bias=bias, dilation=dilation)
+        )
         if drop_rate > 0:
-            logger.info(f'Using dropout with p: {drop_rate}')
-            self.add_module('dropout', nn.Dropout2d(drop_rate, inplace=False))
+            logger.info(f"Using dropout with p: {drop_rate}")
+            self.add_module("dropout", nn.Dropout2d(drop_rate, inplace=False))
 
 
 class _Upsample(nn.Module):
-    def __init__(self, num_maps_in, skip_maps_in, num_maps_out, use_bn=True, k=3, use_skip=True, only_skip=False,
-                 detach_skip=False, separable=False, bneck_starts_with_bn=True,scale_factor=2.0):
+    def __init__(
+        self,
+        num_maps_in,
+        skip_maps_in,
+        num_maps_out,
+        use_bn=True,
+        k=3,
+        use_skip=True,
+        only_skip=False,
+        detach_skip=False,
+        separable=False,
+        bneck_starts_with_bn=True,
+        scale_factor=2.0,
+    ):
         super(_Upsample, self).__init__()
-        print(f'Upsample layer: in = {num_maps_in}, skip = {skip_maps_in}, out = {num_maps_out}')
+        print(f"Upsample layer: in = {num_maps_in}, skip = {skip_maps_in}, out = {num_maps_out}")
         self.bottleneck = _BNReluConv(skip_maps_in, num_maps_in, k=1, batch_norm=use_bn and bneck_starts_with_bn)
         self.blend_conv = _BNReluConv(num_maps_in, num_maps_out, k=k, batch_norm=use_bn, separable=separable)
         self.use_skip = use_skip
         self.only_skip = only_skip
         self.detach_skip = detach_skip
-        logger.info(f'\tUsing skips: {self.use_skip} (only skips: {self.only_skip})')
+        logger.info(f"\tUsing skips: {self.use_skip} (only skips: {self.only_skip})")
         self.upsampling_method = upsample
-        self.upfunc = nn.Upsample(scale_factor=float(scale_factor), mode='bilinear', align_corners=False)
+        self.upfunc = nn.Upsample(scale_factor=float(scale_factor), mode="bilinear", align_corners=False)
 
     def forward(self, x, skip):
         skip = self.bottleneck(skip)
@@ -65,9 +91,21 @@ class _Upsample(nn.Module):
 
 
 class SpatialPyramidPooling(nn.Module):
-    def __init__(self, num_maps_in, num_levels, bt_size=512, level_size=128, out_size=128,
-                 grids=(6, 3, 2, 1), square_grid=False, bn_momentum=0.1, use_bn=True, drop_rate=.0,
-                 fixed_size=None, starts_with_bn=True):
+    def __init__(
+        self,
+        num_maps_in,
+        num_levels,
+        bt_size=512,
+        level_size=128,
+        out_size=128,
+        grids=(6, 3, 2, 1),
+        square_grid=False,
+        bn_momentum=0.1,
+        use_bn=True,
+        drop_rate=0.0,
+        fixed_size=None,
+        starts_with_bn=True,
+    ):
         super(SpatialPyramidPooling, self).__init__()
         self.fixed_size = fixed_size
         self.grids = grids
@@ -77,20 +115,26 @@ class SpatialPyramidPooling(nn.Module):
         self.square_grid = square_grid
         self.upsampling_method = upsample
         if self.fixed_size is not None:
-            self.upsampling_method = lambda x, size: F.interpolate(x, mode='nearest', size=fixed_size)
-            warnings.warn(f'Fixed upsample size', UserWarning)
+            self.upsampling_method = lambda x, size: F.interpolate(x, mode="nearest", size=fixed_size)
+            warnings.warn(f"Fixed upsample size", UserWarning)
         self.spp = nn.Sequential()
-        self.spp.add_module('spp_bn', _BNReluConv(num_maps_in, bt_size, k=1, bn_momentum=bn_momentum,
-                                                  batch_norm=use_bn and starts_with_bn))
+        self.spp.add_module(
+            "spp_bn",
+            _BNReluConv(num_maps_in, bt_size, k=1, bn_momentum=bn_momentum, batch_norm=use_bn and starts_with_bn),
+        )
         num_features = bt_size
         final_size = num_features
         for i in range(num_levels):
             final_size += level_size
-            self.spp.add_module('spp' + str(i),
-                                _BNReluConv(num_features, level_size, k=1, bn_momentum=bn_momentum, batch_norm=use_bn,
-                                            drop_rate=drop_rate))
-        self.spp.add_module('spp_fuse',
-                            _BNReluConv(final_size, out_size, k=1, bn_momentum=bn_momentum, batch_norm=use_bn))
+            self.spp.add_module(
+                "spp" + str(i),
+                _BNReluConv(
+                    num_features, level_size, k=1, bn_momentum=bn_momentum, batch_norm=use_bn, drop_rate=drop_rate
+                ),
+            )
+        self.spp.add_module(
+            "spp_fuse", _BNReluConv(final_size, out_size, k=1, bn_momentum=bn_momentum, batch_norm=use_bn)
+        )
 
     def forward(self, x):
         levels = []

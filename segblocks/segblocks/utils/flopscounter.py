@@ -1,10 +1,10 @@
-'''
+"""
 Copyright (C) 2019 Sovrasov V. - All Rights Reserved
  * You may use, distribute and modify this code under the
  * terms of the MIT license.
  * You should have received a copy of the MIT license with
  * this file. If not visit https://opensource.org/licenses/MIT
-'''
+"""
 
 import sys
 
@@ -13,29 +13,32 @@ import torch.nn as nn
 import numpy as np
 import segblocks
 
-def flops_to_string(flops, units='GMac', precision=2):
-    if units is None:                
+
+def flops_to_string(flops, units="GMac", precision=2):
+    if units is None:
         if flops // 10**9 > 0:
-            return str(round(flops / 10.**9, precision)) + ' GMac'
+            return str(round(flops / 10.0**9, precision)) + " GMac"
         elif flops // 10**6 > 0:
-            return str(round(flops / 10.**6, precision)) + ' MMac'
+            return str(round(flops / 10.0**6, precision)) + " MMac"
         elif flops // 10**3 > 0:
-            return str(round(flops / 10.**3, precision)) + ' KMac'
+            return str(round(flops / 10.0**3, precision)) + " KMac"
         else:
-            return str(flops) + ' Mac'
+            return str(flops) + " Mac"
     else:
-        if units == 'GMac':
-            return str(round(flops / 10.**9, precision)) + ' ' + units
-        elif units == 'MMac':
-            return str(round(flops / 10.**6, precision)) + ' ' + units
-        elif units == 'KMac':
-            return str(round(flops / 10.**3, precision)) + ' ' + units
+        if units == "GMac":
+            return str(round(flops / 10.0**9, precision)) + " " + units
+        elif units == "MMac":
+            return str(round(flops / 10.0**6, precision)) + " " + units
+        elif units == "KMac":
+            return str(round(flops / 10.0**3, precision)) + " " + units
         else:
-            return str(flops) + ' Mac'
+            return str(flops) + " Mac"
+
 
 def get_model_parameters_number(model):
     params_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return params_num
+
 
 def add_flops_counting_methods(net_main_module):
     # adding additional methods to the existing module object,
@@ -44,12 +47,15 @@ def add_flops_counting_methods(net_main_module):
     net_main_module.stop_flops_count = stop_flops_count.__get__(net_main_module)
     net_main_module.reset_flops_count = reset_flops_count.__get__(net_main_module)
     net_main_module.compute_average_flops_cost = compute_average_flops_cost.__get__(net_main_module)
-    net_main_module.compute_total_flops_cost = compute_submodule_average_flops_cost.__get__(net_main_module)
+    net_main_module.compute_total_flops_cost = compute_submodule_average_flops_cost.__get__(
+        net_main_module
+    )
     net_main_module.total_flops_cost_repr = total_flops_cost_repr.__get__(net_main_module)
 
     net_main_module.reset_flops_count()
 
     return net_main_module
+
 
 def compute_average_flops_cost(self):
     """
@@ -71,31 +77,39 @@ def compute_average_flops_cost(self):
 
     return flops_sum / num_images, num_images
 
-def compute_submodule_average_flops_cost(self, submodule_depth: int =0):
+
+def compute_submodule_average_flops_cost(self, submodule_depth: int = 0):
     """
     A method that will be available after add_flops_counting_methods() is called
     on a desired net object.
 
-    Returns the mean flops consumption per image, for all submodules up to depth 
+    Returns the mean flops consumption per image, for all submodules up to depth
     'submodule_depth' (>=0)
     """
     from collections import defaultdict
-    
+
     num_images = self.__batch_counter__
     modules_flops = defaultdict(dict)
     if num_images == 0:
         return modules_flops, num_images
 
     # build module list
-    modules_at_depth = defaultdict(list, {0: [('all', self),]})
-    for depth in range(1, submodule_depth+1):
-        for _, module in modules_at_depth[depth-1]:
+    modules_at_depth = defaultdict(
+        list,
+        {
+            0: [
+                ("all", self),
+            ]
+        },
+    )
+    for depth in range(1, submodule_depth + 1):
+        for _, module in modules_at_depth[depth - 1]:
             for name, mod_children in module.named_children():
-                modules_at_depth[depth].append((name, mod_children))    
+                modules_at_depth[depth].append((name, mod_children))
 
     # for every module in the list, get the flops
-    for depth in range(0, submodule_depth+1):
-        for name, module in  modules_at_depth[depth]:
+    for depth in range(0, submodule_depth + 1):
+        for name, module in modules_at_depth[depth]:
             cls_name = str(module.__class__.__name__)
             if name not in modules_flops[depth]:
                 modules_flops[depth][name] = [0, cls_name]
@@ -106,19 +120,20 @@ def compute_submodule_average_flops_cost(self, submodule_depth: int =0):
 
     return modules_flops, num_images
 
-def total_flops_cost_repr(self, submodule_depth=0, units='GMac', precision=2):
-    '''
+
+def total_flops_cost_repr(self, submodule_depth=0, units="GMac", precision=2):
+    """
     Print an overview of the GMACS per module
     up to depth 'submodule_depth'
-    '''
+    """
     modules_flops, num_images = self.compute_total_flops_cost(submodule_depth)
-    s = '\n======= FLOPSCOUNTER =======\n'
-    s += f'images: {num_images}\n'
+    s = "\n======= FLOPSCOUNTER =======\n"
+    s += f"images: {num_images}\n"
     for depth, modules in modules_flops.items():
-        s += f'# depth {depth}: \n'
+        s += f"# depth {depth}: \n"
         for name, (flops, cls_name) in sorted(modules.items()):
-            s += f'  {name:20} ({cls_name:10}): {flops_to_string(flops, units=units, precision=precision):>15}\n'
-    s += '============================\n'
+            s += f"  {name:20} ({cls_name:10}): {flops_to_string(flops, units=units, precision=precision):>15}\n"
+    s += "============================\n"
     return s
 
 
@@ -161,6 +176,7 @@ def reset_flops_count(self):
     """
     add_batch_counter_variables_or_reset(self)
     self.apply(add_flops_counter_variable_or_reset)
+
 
 # ---- Internal functions
 def empty_flops_counter_hook(module, input, output):
@@ -280,7 +296,7 @@ def add_batch_counter_variables_or_reset(module):
 
 
 def add_batch_counter_hook_function(module):
-    if hasattr(module, '__batch_counter_handle__'):
+    if hasattr(module, "__batch_counter_handle__"):
         return
 
     handle = module.register_forward_hook(batch_counter_hook)
@@ -288,7 +304,7 @@ def add_batch_counter_hook_function(module):
 
 
 def remove_batch_counter_hook_function(module):
-    if hasattr(module, '__batch_counter_handle__'):
+    if hasattr(module, "__batch_counter_handle__"):
         module.__batch_counter_handle__.remove()
         del module.__batch_counter_handle__
 
@@ -296,6 +312,7 @@ def remove_batch_counter_hook_function(module):
 def add_flops_counter_variable_or_reset(module):
     if is_supported_instance(module):
         module.__flops__ = 0
+
 
 MODULES_MAPPING = {
     # convolutions
@@ -344,30 +361,35 @@ MODULES_MAPPING_CONV_LINEAR = {
     torch.nn.ConvTranspose2d: deconv_flops_counter_hook,
 }
 
+
 def is_supported_instance(module):
     if type(module) in MODULES_MAPPING:
         return True
     return False
 
+
 def wrap_segblocks_flops_counter(flops_counter_hook):
     def segblocks_flops_counter_hook(module, input, output):
-        if segblocks.is_dualrestensor(input[0]): 
+        if segblocks.is_dualrestensor(input[0]):
             flops_counter_hook(module, (input[0].highres,), output.highres)
             flops_counter_hook(module, (input[0].lowres,), output.lowres)
         else:
             flops_counter_hook(module, input, output)
+
     return segblocks_flops_counter_hook
 
 
 def add_flops_counter_hook_function(module):
     return _add_flops_counter_hook_function(module, only_conv_and_linear=False)
 
+
 def add_flops_counter_hook_function_conv_and_linear(module):
     return _add_flops_counter_hook_function(module, only_conv_and_linear=True)
 
+
 def _add_flops_counter_hook_function(module, only_conv_and_linear=False):
     mapping = MODULES_MAPPING_CONV_LINEAR if only_conv_and_linear else MODULES_MAPPING
-    if hasattr(module, '__flops_handle__'):
+    if hasattr(module, "__flops_handle__"):
         return
     if type(module) not in mapping:
         return
@@ -380,8 +402,7 @@ def _add_flops_counter_hook_function(module, only_conv_and_linear=False):
 
 def remove_flops_counter_hook_function(module):
     if is_supported_instance(module):
-        if hasattr(module, '__flops_handle__'):
+        if hasattr(module, "__flops_handle__"):
             module.__flops_handle__.remove()
             del module.__flops_handle__
             del module.__flops_function__
-

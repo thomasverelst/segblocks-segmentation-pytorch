@@ -8,17 +8,17 @@ from setuptools import setup
 def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
+
 setup(
-    name = "segblocks",
-    version = "0.1",
-    author = "Thomas Verelst",
-    author_email = "thomas.verelst@esat.kuleuven.be",
-    description = (""),
-    license = "MIT",
-    keywords = "",
-    url = "",
+    name="segblocks",
+    version="0.1",
+    author="Thomas Verelst",
+    author_email="thomas.verelst@esat.kuleuven.be",
+    description=(""),
+    license="MIT",
+    keywords="",
+    url="",
     packages=["segblocks"],
-    long_description=read('README.md'),
-    classifiers=[
-    ],
+    long_description=read("README.md"),
+    classifiers=[],
 )

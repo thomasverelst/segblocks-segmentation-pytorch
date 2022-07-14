@@ -1,14 +1,28 @@
 import torch
 from torch.autograd import Function
 
-from .util import (Dtype, Stream, _kernel_header_blocks, assertcuda,
-                   get_threads_and_blocks, load_kernel, DTYPES_FLOAT)
+from .util import (
+    Dtype,
+    Stream,
+    _kernel_header_blocks,
+    assertcuda,
+    get_threads_and_blocks,
+    load_kernel,
+    DTYPES_FLOAT,
+)
 
 
 class CombineFunction(Function):
     @staticmethod
-    def forward(ctx, x: torch.Tensor, data_hr: torch.Tensor, data_lr: torch.Tensor, 
-                block_idx: torch.Tensor, block_size: int, lowres_factor: int) -> torch.Tensor:
+    def forward(
+        ctx,
+        x: torch.Tensor,
+        data_hr: torch.Tensor,
+        data_lr: torch.Tensor,
+        block_idx: torch.Tensor,
+        block_size: int,
+        lowres_factor: int,
+    ) -> torch.Tensor:
         assert assertcuda(x, dtypes=DTYPES_FLOAT)
         assert assertcuda(data_hr, dtypes=DTYPES_FLOAT)
         assert assertcuda(data_lr, dtypes=DTYPES_FLOAT)
@@ -21,50 +35,84 @@ class CombineFunction(Function):
         ctx.lowres_shape = data_lr.shape
 
         assert len(data_hr) == 0 or data_hr.shape[2:] == (block_size, block_size)
-        assert len(data_lr)  == 0 or data_lr.shape[2:]  == (block_size//lowres_factor, block_size//lowres_factor)
+        assert len(data_lr) == 0 or data_lr.shape[2:] == (
+            block_size // lowres_factor,
+            block_size // lowres_factor,
+        )
 
-        N,C,H,W = x.shape
-        npixels = N*H*W
-        
+        N, C, H, W = x.shape
+        npixels = N * H * W
+
         block, grid = get_threads_and_blocks(npixels, C)
 
-        f = load_kernel('combine_kernel', _combine_kernel,  dtype=Dtype(x),
-                 batch_size=N, channels=C, height=H, width=W,
-                block_size=block_size, lowres_factor=lowres_factor)
-        f(block=block, grid=grid,
+        f = load_kernel(
+            "combine_kernel",
+            _combine_kernel,
+            dtype=Dtype(x),
+            batch_size=N,
+            channels=C,
+            height=H,
+            width=W,
+            block_size=block_size,
+            lowres_factor=lowres_factor,
+        )
+        f(
+            block=block,
+            grid=grid,
             args=[
-                x.data_ptr(), data_hr.data_ptr(), data_lr.data_ptr(), 
-                block_idx.data_ptr(), npixels
+                x.data_ptr(),
+                data_hr.data_ptr(),
+                data_lr.data_ptr(),
+                block_idx.data_ptr(),
+                npixels,
             ],
-            stream=Stream(ptr=torch.cuda.current_stream().cuda_stream))
+            stream=Stream(ptr=torch.cuda.current_stream().cuda_stream),
+        )
         return x
 
     @staticmethod
     def backward(ctx, grad_combined):
         grad_combined = grad_combined.contiguous()
-        
+
         block_idx = ctx.saved_variables[0]
-        N,C,H,W = grad_combined.shape
-        npixels = N*H*W
-        
+        N, C, H, W = grad_combined.shape
+        npixels = N * H * W
+
         block, grid = get_threads_and_blocks(npixels, C)
 
         highres_grad = torch.zeros(ctx.highres_shape, device=grad_combined.device, dtype=grad_combined.dtype)
         lowres_grad = torch.zeros(ctx.lowres_shape, device=grad_combined.device, dtype=grad_combined.dtype)
 
-        f = load_kernel('combine_kernel_bw', _combine_kernel_bw,  dtype=Dtype(grad_combined),
-                 batch_size=N, channels=C, height=H, width=W,
-                block_size=ctx.block_size, lowres_factor=ctx.lowres_factor)
-        f(block=block, grid=grid,
+        f = load_kernel(
+            "combine_kernel_bw",
+            _combine_kernel_bw,
+            dtype=Dtype(grad_combined),
+            batch_size=N,
+            channels=C,
+            height=H,
+            width=W,
+            block_size=ctx.block_size,
+            lowres_factor=ctx.lowres_factor,
+        )
+        f(
+            block=block,
+            grid=grid,
             args=[
-                grad_combined.data_ptr(), highres_grad.data_ptr(), lowres_grad.data_ptr(), 
-                block_idx.data_ptr(), npixels
-            ], stream=Stream(ptr=torch.cuda.current_stream().cuda_stream))
+                grad_combined.data_ptr(),
+                highres_grad.data_ptr(),
+                lowres_grad.data_ptr(),
+                block_idx.data_ptr(),
+                npixels,
+            ],
+            stream=Stream(ptr=torch.cuda.current_stream().cuda_stream),
+        )
 
         return None, highres_grad, lowres_grad, None, None, None, None
 
 
-_combine_kernel = _kernel_header_blocks+'''
+_combine_kernel = (
+    _kernel_header_blocks
+    + """
 #define WIDTH ${width}
 #define HEIGHT ${height}
 
@@ -109,9 +157,12 @@ CUDA_KERNEL_LOOP(i, npixels){
     }
 } // close kernel loop
 } // close kernel
-'''
+"""
+)
 
-_combine_kernel_bw = _kernel_header_blocks+'''
+_combine_kernel_bw = (
+    _kernel_header_blocks
+    + """
 #define WIDTH ${width}
 #define HEIGHT ${height}
 
@@ -152,4 +203,5 @@ CUDA_KERNEL_LOOP(i, npixels){
     }
 } // close kernel loop
 } // close kernel
-'''
+"""
+)

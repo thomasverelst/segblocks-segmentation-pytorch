@@ -1,18 +1,25 @@
 import torch
 from torch.autograd import Function
 
-from .util import (DTYPES_FLOAT, Dtype, Stream, _kernel_header_blocks,
-                   assertcuda, get_threads_and_blocks, load_kernel)
+from .util import DTYPES_FLOAT, Dtype, Stream, _kernel_header_blocks, assertcuda, get_threads_and_blocks, load_kernel
 
 
 class BlockPad(Function):
     """
     Function to pad tensors using BlockPad
     """
+
     @staticmethod
-    def forward(ctx, data_hr: torch.Tensor, data_lr: torch.Tensor, 
-                map_hr: torch.Tensor, map_lr: torch.Tensor, 
-                block_idx: torch.Tensor, padding: int, is_highres: bool) -> torch.Tensor:
+    def forward(
+        ctx,
+        data_hr: torch.Tensor,
+        data_lr: torch.Tensor,
+        map_hr: torch.Tensor,
+        map_lr: torch.Tensor,
+        block_idx: torch.Tensor,
+        padding: int,
+        is_highres: bool,
+    ) -> torch.Tensor:
         """
         Returns a block-padded version of the data tensor.
         When is_highres is True, the high-res data tensor (data_hr) is padded.
@@ -26,7 +33,7 @@ class BlockPad(Function):
         padding: padding size in pixels (equal padding on all sides)
         is_highres: whether to pad the highres data tensor (True) or the lowres data tensor (False)
         """
-        do_avg = 1 # use average resampling
+        do_avg = 1  # use average resampling
         assert assertcuda(data_hr, dtypes=DTYPES_FLOAT)
         assert assertcuda(data_lr, dtypes=DTYPES_FLOAT)
         assert assertcuda(block_idx, dtypes=torch.int32)
@@ -43,11 +50,11 @@ class BlockPad(Function):
 
         batch_size, grid_h, grid_w = block_idx.shape
         block_size = data_hr.shape[2]
-        lowres_factor = data_hr.shape[2]//data_lr.shape[2]
+        lowres_factor = data_hr.shape[2] // data_lr.shape[2]
         height, width = grid_h * block_size, grid_w * block_size
 
-        ctx.block_size = block_size # block size of highres data
-        ctx.lowres_factor = lowres_factor # size factor of highres compared to lowres
+        ctx.block_size = block_size  # block size of highres data
+        ctx.lowres_factor = lowres_factor  # size factor of highres compared to lowres
 
         data_in = data_hr if is_highres else data_lr
         data_map = map_hr if is_highres else map_lr
@@ -58,19 +65,38 @@ class BlockPad(Function):
         if len(data_map) == 0:
             data_out.fill_(0)
         else:
-            npixels = len(data_map) * block_size_pad ** 2 # number of output pixels to process
-            block, grid = get_threads_and_blocks(npixels, C) # get CUDA block and grid 
+            npixels = len(data_map) * block_size_pad**2  # number of output pixels to process
+            block, grid = get_threads_and_blocks(npixels, C)  # get CUDA block and grid
 
             # build a kernel
-            f = load_kernel('blockpad_kernel_forward', _repad_kernel_avg_sep, dtype=Dtype(data_hr),
-                        batch_size=batch_size, channels=C, height=height, width=width,
-                    block_size=block_size, lowres_factor=lowres_factor, padding=padding, is_highres=int(is_highres), do_avg=int(do_avg))
+            f = load_kernel(
+                "blockpad_kernel_forward",
+                _repad_kernel_avg_sep,
+                dtype=Dtype(data_hr),
+                batch_size=batch_size,
+                channels=C,
+                height=height,
+                width=width,
+                block_size=block_size,
+                lowres_factor=lowres_factor,
+                padding=padding,
+                is_highres=int(is_highres),
+                do_avg=int(do_avg),
+            )
             # execute kernel
-            f(block=block, grid=grid,
-                    args=[data_hr.data_ptr(), data_lr.data_ptr(), 
-                        data_map.data_ptr(), data_out.data_ptr(),
-                        block_idx.data_ptr(), int(npixels)],
-                stream=Stream(ptr=torch.cuda.current_stream().cuda_stream))
+            f(
+                block=block,
+                grid=grid,
+                args=[
+                    data_hr.data_ptr(),
+                    data_lr.data_ptr(),
+                    data_map.data_ptr(),
+                    data_out.data_ptr(),
+                    block_idx.data_ptr(),
+                    int(npixels),
+                ],
+                stream=Stream(ptr=torch.cuda.current_stream().cuda_stream),
+            )
         return data_out
 
     @staticmethod
@@ -92,7 +118,7 @@ class BlockPad(Function):
             n = max(len(data_map), 1)
             size = (n, channels, block_size, block_size)
             return torch.zeros(size, device=grad_data_pad.device, dtype=grad_data_pad.dtype)
-        
+
         grad_hr = create_tensors(map_hr, block_size)
         grad_lr = create_tensors(map_lr, block_size // lowres_factor)
 
@@ -100,21 +126,39 @@ class BlockPad(Function):
         if len(data_map) > 0:
             npixels = len(data_map) * grad_data_pad.shape[2] ** 2
             block, grid = get_threads_and_blocks(npixels, channels)
-            fac = load_kernel('blockpad_kernel_backward', _repad_kernel_avg_sep_bw, dtype=Dtype(grad_data_pad),
-                        batch_size=batch_size, channels=channels, height=height, width=width,
-                    block_size=block_size, lowres_factor=lowres_factor, padding=padding, is_highres=int(ctx.is_highres), do_avg=int(do_avg))
-            fac(block=block, grid=grid,
-                    args=[grad_hr.data_ptr(), grad_lr.data_ptr(), 
-                        grad_data_pad.data_ptr(), data_map.data_ptr(),
-                        block_idx.data_ptr(), int(npixels)],
-                stream=Stream(ptr=torch.cuda.current_stream().cuda_stream))
+            fac = load_kernel(
+                "blockpad_kernel_backward",
+                _repad_kernel_avg_sep_bw,
+                dtype=Dtype(grad_data_pad),
+                batch_size=batch_size,
+                channels=channels,
+                height=height,
+                width=width,
+                block_size=block_size,
+                lowres_factor=lowres_factor,
+                padding=padding,
+                is_highres=int(ctx.is_highres),
+                do_avg=int(do_avg),
+            )
+            fac(
+                block=block,
+                grid=grid,
+                args=[
+                    grad_hr.data_ptr(),
+                    grad_lr.data_ptr(),
+                    grad_data_pad.data_ptr(),
+                    data_map.data_ptr(),
+                    block_idx.data_ptr(),
+                    int(npixels),
+                ],
+                stream=Stream(ptr=torch.cuda.current_stream().cuda_stream),
+            )
         return grad_hr, grad_lr, None, None, None, None, None
 
 
-
-
-
-_repad_kernel_avg_sep = _kernel_header_blocks+'''
+_repad_kernel_avg_sep = (
+    _kernel_header_blocks
+    + """
 #define IS_HIGHRES ${is_highres}
 #define DO_AVG ${do_avg}
 #define PADDING ${padding}
@@ -225,10 +269,13 @@ CUDA_KERNEL_LOOP(i, npixels){
     }
 } // closes kernel_loop
 } // closes kernel
-'''
+"""
+)
 
 
-_repad_kernel_avg_sep_bw = _kernel_header_blocks+'''
+_repad_kernel_avg_sep_bw = (
+    _kernel_header_blocks
+    + """
 #define IS_HIGHRES ${is_highres}
 #define DO_AVG ${do_avg}
 #define PADDING ${padding}
@@ -335,4 +382,5 @@ CUDA_KERNEL_LOOP(i, npixels){
     }
 } // closes kernel_loop
 } // closes kernel
-'''
+"""
+)

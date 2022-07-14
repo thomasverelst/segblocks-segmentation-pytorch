@@ -1,32 +1,35 @@
 import numpy as np
 from dataloaders.cityscapes import Cityscapes
 
+
 class _StreamMetrics(object):
     def __init__(self):
-        """ Overridden by subclasses """
+        """Overridden by subclasses"""
         raise NotImplementedError()
 
     def update(self, gt, pred):
-        """ Overridden by subclasses """
+        """Overridden by subclasses"""
         raise NotImplementedError()
 
     def get_results(self):
-        """ Overridden by subclasses """
+        """Overridden by subclasses"""
         raise NotImplementedError()
 
     def to_str(self, metrics):
-        """ Overridden by subclasses """
+        """Overridden by subclasses"""
         raise NotImplementedError()
 
     def reset(self):
-        """ Overridden by subclasses """
-        raise NotImplementedError()      
+        """Overridden by subclasses"""
+        raise NotImplementedError()
+
 
 class StreamSegMetrics(_StreamMetrics):
     """
     Stream Metrics for Semantic Segmentation Task
     from https://github.com/VainF/DeepLabV3Plus-Pytorch
     """
+
     def __init__(self, n_classes, class_names=None):
         self.n_classes = n_classes
         self.confusion_matrix = np.zeros((n_classes, n_classes))
@@ -41,7 +44,7 @@ class StreamSegMetrics(_StreamMetrics):
             ltflatten = lt.flatten()
             lpflatten = lp.flatten()
 
-            conf_mat = self._fast_hist( ltflatten, lpflatten )
+            conf_mat = self._fast_hist(ltflatten, lpflatten)
             self.confusion_matrix += conf_mat
             iu = np.diag(conf_mat) / (conf_mat.sum(axis=1) + conf_mat.sum(axis=0) - np.diag(conf_mat))
             mean_iu = np.nanmean(iu)
@@ -55,16 +58,16 @@ class StreamSegMetrics(_StreamMetrics):
             mean_iu = np.nanmean(iu)
             self.ious_sum.append(mean_iu)
             self.accs_sum.append(acc)
-            
+
     @staticmethod
     def to_str(results):
         string = "\n"
         for k, v in results.items():
-            if k!="Class IoU":
-                string += "%s: %f\n"%(k, v)
-        
-        #string+='Class IoU:\n'
-        #for k, v in results['Class IoU'].items():
+            if k != "Class IoU":
+                string += "%s: %f\n" % (k, v)
+
+        # string+='Class IoU:\n'
+        # for k, v in results['Class IoU'].items():
         #    string += "\tclass %d: %f\n"%(k, v)
         return string
 
@@ -72,16 +75,16 @@ class StreamSegMetrics(_StreamMetrics):
         mask = (label_true >= 0) & (label_true < self.n_classes)
         hist = np.bincount(
             self.n_classes * label_true[mask].astype(int) + label_pred[mask],
-            minlength=self.n_classes ** 2,
+            minlength=self.n_classes**2,
         ).reshape(self.n_classes, self.n_classes)
         return hist
 
     def get_results(self):
         """Returns accuracy score evaluation result.
-            - overall accuracy
-            - mean accuracy
-            - mean IU
-            - fwavacc
+        - overall accuracy
+        - mean accuracy
+        - mean IU
+        - fwavacc
         """
         hist = self.confusion_matrix
         acc = np.diag(hist).sum() / hist.sum()
@@ -96,24 +99,26 @@ class StreamSegMetrics(_StreamMetrics):
             cls_iu = dict(zip(self.class_names, iu))
 
         return {
-                "Overall Acc": acc,
-                "Mean Acc": acc_cls,
-                "FreqW Acc": fwavacc,
-                "Mean IoU": mean_iu,
-                "Class IoU": cls_iu,
-            }
-        
+            "Overall Acc": acc,
+            "Mean Acc": acc_cls,
+            "FreqW Acc": fwavacc,
+            "Mean IoU": mean_iu,
+            "Class IoU": cls_iu,
+        }
+
     def reset(self):
         self.confusion_matrix = np.zeros((self.n_classes, self.n_classes))
 
+
 class AverageMeter(object):
     """Computes average values"""
+
     def __init__(self):
         self.book = dict()
 
     def reset_all(self):
         self.book.clear()
-    
+
     def reset(self, id):
         item = self.book.get(id, None)
         if item is not None:
@@ -125,8 +130,8 @@ class AverageMeter(object):
         if record is None:
             self.book[id] = [val, 1]
         else:
-            record[0]+=val
-            record[1]+=1
+            record[0] += val
+            record[1] += 1
 
     def get_results(self, id):
         record = self.book.get(id, None)

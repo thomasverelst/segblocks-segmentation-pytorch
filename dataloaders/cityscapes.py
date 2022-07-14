@@ -9,11 +9,12 @@ from PIL import Image
 
 
 def default_loader(path):
-    return Image.open(path).convert('RGB')
+    return Image.open(path).convert("RGB")
+
 
 class Cityscapes(data.Dataset):
     """Cityscapes <http://www.cityscapes-dataset.com/> Dataset.
-    
+
     **Parameters:**
         - **root** (string): Root directory of dataset where directory 'leftImg8bit' and 'gtFine' or 'gtCoarse' are located.
         - **split** (string, optional): The image split to use, 'train', 'test' or 'val' if mode="gtFine" otherwise 'train', 'train_extra' or 'val'
@@ -23,8 +24,10 @@ class Cityscapes(data.Dataset):
     """
 
     # Based on https://github.com/mcordts/cityscapesScripts
-    CityscapesClass = namedtuple('CityscapesClass', ['name', 'id', 'train_id', 'category', 'category_id',
-                                                     'has_instances', 'ignore_in_eval', 'color'])
+    CityscapesClass = namedtuple(
+        "CityscapesClass",
+        ["name", "id", "train_id", "category", "category_id", "has_instances", "ignore_in_eval", "color"],
+    )
     classes = [
         CityscapesClass('unlabeled',            0, 255, 'void', 0, False, True, (0, 0, 0)),
         CityscapesClass('ego vehicle',          1, 255, 'void', 0, False, True, (0, 0, 0)),
@@ -63,25 +66,24 @@ class Cityscapes(data.Dataset):
         CityscapesClass('license plate',        -1, 255, 'vehicle', 7, False, True, (0, 0, 142)),
     ]
     ignore_id = 255
-    num_classes = 19 # excluding 'ignored' class
-    
+    num_classes = 19  # excluding 'ignored' class
+
     train_id_to_color = [c.color for c in classes if (c.train_id != -1 and c.train_id != 255)]
-    train_id_to_color.append([0, 0, 0]) # for ignored classes
+    train_id_to_color.append([0, 0, 0])  # for ignored classes
     train_id_to_color = np.array(train_id_to_color)
     id_to_train_id = np.array([c.train_id for c in classes])
-    
+
     train_id_to_class_names = [c.name for c in classes if (c.train_id != -1 and c.train_id != 255)]
-    print('Cityscapes class names:', train_id_to_class_names)
+    print("Cityscapes class names:", train_id_to_class_names)
 
     ignored_class_names = [c.name for c in classes if (c.train_id == -1 or c.train_id == 255)]
-    print('Cityscapes ignored class names:', ignored_class_names)
+    print("Cityscapes ignored class names:", ignored_class_names)
 
-
-    def __init__(self, root, split='train', transform=None, transform_target=False):
+    def __init__(self, root, split="train", transform=None, transform_target=False):
         self.root = os.path.expanduser(root)
-        self.mode = 'gtFine'
-        self.target_type = 'semantic'
-        self.images_dir = os.path.join(self.root, 'leftImg8bit', split)
+        self.mode = "gtFine"
+        self.target_type = "semantic"
+        self.images_dir = os.path.join(self.root, "leftImg8bit", split)
 
         self.targets_dir = os.path.join(self.root, self.mode, split)
         self.transform = transform
@@ -93,24 +95,26 @@ class Cityscapes(data.Dataset):
 
         self.loader = default_loader
 
-        if split not in ['train', 'test', 'val']:
-            raise ValueError('Invalid split for mode! Please use split="train", split="test"'
-                             ' or split="val"')
+        if split not in ["train", "test", "val"]:
+            raise ValueError('Invalid split for mode! Please use split="train", split="test"' ' or split="val"')
 
         if not os.path.isdir(self.images_dir) or not os.path.isdir(self.targets_dir):
-            raise RuntimeError('Dataset not found or incomplete. Please make sure all required folders for the'
-                               ' specified "split" and "mode" are inside the "root" directory')
-        
+            raise RuntimeError(
+                "Dataset not found or incomplete. Please make sure all required folders for the"
+                ' specified "split" and "mode" are inside the "root" directory'
+            )
+
         for city in os.listdir(self.images_dir):
             img_dir = os.path.join(self.images_dir, city)
             target_dir = os.path.join(self.targets_dir, city)
 
             for file_name in os.listdir(img_dir):
                 self.images.append(os.path.join(img_dir, file_name))
-                target_name = '{}_{}'.format(file_name.split('_leftImg8bit')[0],
-                                             self._get_target_suffix(self.mode, self.target_type))
+                target_name = "{}_{}".format(
+                    file_name.split("_leftImg8bit")[0], self._get_target_suffix(self.mode, self.target_type)
+                )
                 self.targets.append(os.path.join(target_dir, target_name))
-        print(f'Ciyscapes {split} with {len(self.images)} images')
+        print(f"Ciyscapes {split} with {len(self.images)} images")
 
     @classmethod
     def encode_target(cls, target):
@@ -131,33 +135,32 @@ class Cityscapes(data.Dataset):
         target = Image.open(self.targets[index])
         target = self.encode_target(np.asarray(target))
         if self.transform:
-            t = self.transform(image=np.asarray(image),mask=target)
-            image = t['image']
+            t = self.transform(image=np.asarray(image), mask=target)
+            image = t["image"]
             if self.transform_target:
-                target = t['mask']
+                target = t["mask"]
             else:
                 target = torch.from_numpy(target)
-        file = os.path.basename(self.targets[index]).replace('_gtFine_labelIds', '')
-        meta = {'file': file}
+        file = os.path.basename(self.targets[index]).replace("_gtFine_labelIds", "")
+        meta = {"file": file}
         return image, target, meta
 
     def __len__(self):
         return len(self.images)
 
     def _load_json(self, path):
-        with open(path, 'r') as file:
+        with open(path, "r") as file:
             data = json.load(file)
         return data
 
     def _get_target_suffix(self, mode, target_type):
-        if target_type == 'instance':
-            return '{}_instanceIds.png'.format(mode)
-        elif target_type == 'semantic':
-            return '{}_labelIds.png'.format(mode)
-        elif target_type == 'color':
-            return '{}_color.png'.format(mode)
-        elif target_type == 'polygon':
-            return '{}_polygons.json'.format(mode)
-        elif target_type == 'depth':
-            return '{}_disparity.png'.format(mode)
-
+        if target_type == "instance":
+            return "{}_instanceIds.png".format(mode)
+        elif target_type == "semantic":
+            return "{}_labelIds.png".format(mode)
+        elif target_type == "color":
+            return "{}_color.png".format(mode)
+        elif target_type == "polygon":
+            return "{}_polygons.json".format(mode)
+        elif target_type == "depth":
+            return "{}_disparity.png".format(mode)
