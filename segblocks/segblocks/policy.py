@@ -8,11 +8,12 @@ from torch.distributions import Bernoulli
 
 BN_MOMENTUM = 0.01
 
-def all_policies():
+def all_policies() -> dict:
     return {
         "disabled": None,
         "random": PolicyRandom,
         "half": PolicyHalf,
+        "heuristic": PolicyHeuristic,
         "reinforce": PolicyReinforce,
     }
 
@@ -107,7 +108,6 @@ class PolicyHalf(Policy):
         meta["grid"] = grid
         return grid, meta
 
-
 class PolicyRandom(Policy):
     """
     Policy that executes random blocks in high-res
@@ -123,6 +123,52 @@ class PolicyRandom(Policy):
         grid = self._quantize_grid_percentage(grid, self.quantize_percentage)
         meta["grid"] = grid
         return grid, meta
+
+
+class PolicyHeuristic(Policy):
+    """
+    Policy that executes random blocks in high-res
+    """
+    def forward(self, x: torch.Tensor, meta: dict):
+        N, C, H, W = x.shape
+        assert H % self.block_size == 0
+        assert W % self.block_size == 0
+
+        # x = x[:,:,::2,::2]
+        scale_factor = 4
+        x_down = F.avg_pool2d(x, kernel_size=scale_factor)
+        x_up = F.interpolate(x_down, scale_factor=scale_factor, mode='nearest')
+        diff = (torch.abs_(x_up - x)).sum(dim=1, keepdim=True)
+        t = F.avg_pool2d(diff, kernel_size=self.block_size)
+        t = t.squeeze(1)
+        thres = self.percent_target
+        grid =  t > thres
+        meta["grid"] = grid
+        return grid, meta
+
+
+class PolicyHeuristicSSIM(Policy):
+    """
+    Policy that executes random blocks in high-res
+    """
+    def forward(self, x: torch.Tensor, meta: dict):
+        N, C, H, W = x.shape
+        assert H % self.block_size == 0
+        assert W % self.block_size == 0
+
+        x_down = F.avg_pool2d(x, kernel_size=4)
+        x_up = F.interpolate(x_down, scale_factor=4, mode='nearest')
+        diff = (torch.abs_(x_up - x)).sum(dim=1, keepdim=True)
+        t = F.avg_pool2d(diff, kernel_size=self.block_size)
+        t = t.squeeze(1)
+        # if self.thres:
+        thres = self.percent_target
+        grid =  t > thres
+        meta["grid"] = grid
+        return grid, meta
+
+
+
 
 
 class PolicyReinforce(Policy):

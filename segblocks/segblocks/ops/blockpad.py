@@ -33,7 +33,7 @@ class BlockPad(Function):
         padding: padding size in pixels (equal padding on all sides)
         is_highres: whether to pad the highres data tensor (True) or the lowres data tensor (False)
         """
-        do_avg = 1  # use average resampling
+        do_avg = True  # use average resampling
         assert assertcuda(data_hr, dtypes=DTYPES_FLOAT)
         assert assertcuda(data_lr, dtypes=DTYPES_FLOAT)
         assert assertcuda(block_idx, dtypes=torch.int32)

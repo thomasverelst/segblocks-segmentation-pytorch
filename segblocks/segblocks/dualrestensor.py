@@ -11,17 +11,20 @@ from segblocks.utils.profiler import timings
 from .ops import batchnorm, blockcombine, blockpad, blocksplit
 
 ## flags
-VERBOSE = False  # verbose print
-USE_BLOCKPAD = True  # debug flag to disable blockpad
-USE_INTERPOLATION_SPEED_TRICK = (
-    True  # bilinear interpolation is slow on small spatial dimensions, but trilinear is fast
-)
-USE_DUALRES_BATCHNORM = (
-    True  # use custom batch norm with statistics over both high-res and low-res blocks
-)
+# verbose print
+VERBOSE = False
+
+# debug flag to disable blockpad
+USE_BLOCKPAD = True
+
+# bilinear interpolation is slow on small spatial dimensions, but trilinear is fast
+USE_INTERPOLATION_SPEED_TRICK = True
+
+# use custom batch norm with statistics over both high-res and low-res blocks
+USE_DUALRES_BATCHNORM = True
 
 
-HANDLED_FUNCTIONS = {}  # functions that can be handled by dualrestensors
+## helper functions
 
 
 def implements(torch_functions: Iterable):
@@ -37,6 +40,10 @@ def implements(torch_functions: Iterable):
         return func
 
     return decorator
+
+
+# functions that can be handled by dualrestensors, will be handled by register
+HANDLED_FUNCTIONS = {}
 
 
 def is_dualrestensor(x: object) -> bool:
@@ -268,9 +275,7 @@ class DualResTensor(object):
         Combine highres and lowres patches to a single NCHW tensor
         """
         with timings.env("dualrestensor/combine"):
-            out = torch.empty(
-                self.represented_shape, device=self.highres.device, dtype=self.highres.dtype
-            )
+            out = torch.empty(self.represented_shape, device=self.highres.device, dtype=self.highres.dtype)
             out = blockcombine.CombineFunction.apply(
                 out,
                 self.highres,
@@ -281,19 +286,16 @@ class DualResTensor(object):
             )
 
         if VERBOSE:
-            print(
-                f"DualResTensor.combine: {self.highres.shape} + {self.lowres.shape} -> {out.shape}"
-            )
+            print(f"DualResTensor.combine: {self.highres.shape} + {self.lowres.shape} -> {out.shape}")
 
         return out
 
     @classmethod
-    def __torch_function__(
-        cls, func: Callable, types: Tuple, args: Tuple = (), kwargs: Optional[Dict] = None
-    ) -> Any:
+    def __torch_function__(cls, func: Callable, types: Tuple, args: Tuple = (), kwargs: Optional[Dict] = None) -> Any:
         """
         Handles pytorch functions
         """
+
         if kwargs is None:
             kwargs = {}
         if func.__name__ not in HANDLED_FUNCTIONS:
@@ -439,11 +441,13 @@ def padded_functions(func: Callable, *args, **kwargs) -> DualResTensor:
 @implements(["batch_norm"])
 def batch_norm_functions(func: Callable, *args, **kwargs) -> DualResTensor:
     """
-    When training, we need to get batch norm statistics over both high-res and low-res tensors.
+    When training, we need to get batch norm statistics over both high-res and low-res tensors,
+    instead of updating sequentially,
     During validation, batch statistics are saved batchnorm can be executed over both high-res
     and low-res tensors separately
     """
     if not USE_DUALRES_BATCHNORM:
+        # debug mode that applies batchnorm on highres and lowres subsequently
         out = apply_func_on_dualres(func, *args, **kwargs)
     else:
         with timings.env("dualrestensor/custom_batch_norm"):
@@ -464,7 +468,7 @@ def batch_norm_functions(func: Callable, *args, **kwargs) -> DualResTensor:
 @implements(["relu", "hardtanh", "__add__", "__sub__"])
 def per_resolution(func: Callable, *args, **kwargs) -> DualResTensor:
     """
-    Operations that can be performed as-is on the high and low-resolutoin tensor
+    Operations that can be performed as-is on the high and low-resolution tensor
     """
     return apply_func_on_dualres(func, *args, **kwargs)
 
@@ -502,15 +506,11 @@ def channel_only(func: Callable, *args, **kwargs) -> DualResTensor:
     if "dim" in kwargs and kwargs["dim"] == 1:
         pass
     else:
-        warnings.warn(
-            f"Functon {func.__name__} might behave differently with DualResTensor when dim != 1!"
-        )
+        warnings.warn(f"Functon {func.__name__} might behave differently with DualResTensor when dim != 1!")
     return apply_func_on_dualres(func, *args, **kwargs)
 
 
-@implements(
-    ["adaptive_avg_pool2d", "adaptive_max_pool2d", "linear", "flip", "unsqueeze", "reshape", "view"]
-)
+@implements(["adaptive_avg_pool2d", "adaptive_max_pool2d", "linear", "flip", "unsqueeze", "reshape", "view"])
 def incompatible(func: Callable, *args, **kwargs):
     """
     Incompatible functions

@@ -7,7 +7,7 @@ from torch import nn as nn
 from utils.logger import logger
 
 upsample = lambda x, size: F.interpolate(x, size, mode="bilinear")
-BN_MOMENTUM = 0.01
+BN_MOMENTUM = 0.02
 
 
 class SeparableConv2d(nn.Module):

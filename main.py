@@ -69,25 +69,27 @@ def train(C, R):
         out, meta = R.model(image, meta)
 
         loss, loss_per_pixel = R.loss_function(out, target)
-        logger.log_float_interval("train/loss_task", loss.item())
+        logger.log_float_interval("train/loss_task", loss)
 
         if R.model.policy is not None:
             loss_policy = R.model.policy.loss(loss_per_pixel, meta)
             loss += loss_policy
 
-            logger.log_float_interval(
-                "train/segblocks_block_percent",
-                lambda: float(meta["grid"].sum()) / meta["grid"].numel(),
-            )
-            logger.log_float_interval("train/policy_reward_sparsity", meta["reward_sparsity"])
-            logger.log_float_interval("train/policy_advantage_task_abs", meta["advantage_task"].abs().mean())
-            logger.log_float_interval("train/policy_advantage_abs", meta["advantage"].abs().mean())
-            logger.log_float_interval("train/loss_policy", loss_policy.item())
+            get_blocks_percent = lambda: float(meta["grid"].sum()) / meta["grid"].numel()
+            logger.log_float_interval("train/segblocks_block_percent", get_blocks_percent)
+            logger.log_float_interval("train/loss_policy", loss_policy)
+            
+            if "reward_sparsity" in meta:
+                logger.log_float_interval("train/policy_reward_sparsity", meta["reward_sparsity"])
+            if "advantage_task" in meta:
+                logger.log_float_interval("train/policy_advantage_task_abs", meta["advantage_task"].abs().mean())
+            if "advantage" in meta:
+                logger.log_float_interval("train/policy_advantage_abs", meta["advantage"].abs().mean())
             if "grid_probs" in meta:
                 logger.log_float_interval("train/policy_prob_mean", lambda: meta["grid_probs"].mean())
                 logger.log_float_interval("train/policy_prob_std", lambda: meta["grid_probs"].std())
 
-        R.logger.log_float_interval("train/loss_total", loss.item())
+        R.logger.log_float_interval("train/loss_total", loss)
 
         R.optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -218,6 +220,14 @@ def build_dataset(C, R):
         h, w = C.res // 2, C.res
         train_transform = A.Compose(
             [
+                A.augmentations.geometric.rotate.Rotate(
+                    limit=C.rotate,
+                    interpolation=cv2.INTER_LINEAR,
+                    border_mode=cv2.BORDER_CONSTANT,
+                    value=R.dataset.mean,
+                    mask_value=R.dataset.ignore_id,
+                    p=1 if C.rotate > 0 else 0,
+                ),
                 A.RandomScale((-0.5, 1.0), p=1),  # note: albumentations scale factor differs from torchvision
                 A.PadIfNeeded(
                     min_height=C.crop_res,
@@ -227,7 +237,7 @@ def build_dataset(C, R):
                     mask_value=R.dataset.ignore_id,
                 ),
                 A.RandomCrop(C.crop_res, C.crop_res),
-                A.ColorJitter(brightness=C.jitter, contrast=C.jitter, saturation=C.jitter, hue=0.05),
+                A.ColorJitter(brightness=C.jitter, contrast=C.jitter, saturation=C.jitter, hue=0.1),
                 A.HorizontalFlip(p=0.5),
                 A.Normalize(mean=R.dataset.mean, std=R.dataset.std),
                 APT.ToTensorV2(),
@@ -244,7 +254,9 @@ def build_dataset(C, R):
         ds_val = Cityscapes(root=C.data_dir, split="val", transform=val_transform, transform_target=False)
 
         R.dataloaders = {}
-        R.dataloaders.train = DataLoader(ds_train, batch_size=C.batch_size, shuffle=True, num_workers=C.num_workers)
+        R.dataloaders.train = DataLoader(
+            ds_train, batch_size=C.batch_size, shuffle=True, num_workers=C.num_workers, pin_memory=True
+        )
         R.dataloaders.val = DataLoader(
             ds_val,
             batch_size=C.batch_size,
@@ -460,4 +472,6 @@ if __name__ == "__main__":
     import multiprocessing
 
     multiprocessing.set_start_method("spawn")
-    main()
+
+    from utils import condor
+    condor.run(main, only_on_condor=False)
