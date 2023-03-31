@@ -28,6 +28,7 @@ class SegBlocksModel(nn.Module):
         self.policy = policy
 
     def forward(self, x: torch.nn.Module, meta: dict):
+        
         out, meta = execute_with_policy(self.net, self.policy, x, meta)
         return out, meta
 
@@ -39,11 +40,11 @@ def execute_with_policy(net: torch.nn.Module, policy: Policy, image: torch.Tenso
     should be executed in high resolution
     """
     timings.add_count(len(image))
-    if policy is not None:
+    if policy is not None and not meta.get('is_warmup', False):
         with timings.env("segblocks/policy"):
             # run the policy on the image
             grid, meta = policy(image, meta)
-        out = execute_with_grid(net, image, grid)
+            out = execute_with_grid(net, image, grid)
     else:
         out = net(image)
     return out, meta

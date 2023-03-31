@@ -17,7 +17,7 @@ DTYPES_FLOAT = (torch.float16, torch.float32, torch.float64)
 Stream = namedtuple("Stream", ["ptr"])
 
 # CUDA_PATH = ('-I/usr/local/cuda/include','-I/usr/local/cuda-11.1/include','-I/usr/local/cuda-11.3/include','-I/usr/local/cuda-11.5/include','-I/usr/local/cuda-11.6/include')
-CUDA_PATH = ["-I/usr/local/cuda/include"]
+CUDA_PATH = ["-I/usr/local/cuda-11.8/include"]
 if "CUDA_HOME" in os.environ:
     CUDA_PATH.append(f"-I{os.path.join(os.environ['CUDA_HOME'], 'include')}")
 

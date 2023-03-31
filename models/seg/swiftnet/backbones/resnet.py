@@ -5,7 +5,8 @@ try:
 except ImportError:
     from torch.utils.model_zoo import load_url as load_state_dict_from_url
 from utils.logger import logger
-BN_MOMENTUM = 0.02
+
+BN_MOMENTUM = 0.05
 INPLACE = False
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
@@ -121,8 +122,10 @@ class ResNet(nn.Module):
         self.dilation = 1
         self.groups = groups
         self.base_width = width_per_group
-        strides = [2,2,2,2]
-        dilates = [False, False, False, False]
+        if strides is None:
+            strides = [2,2,2,2]
+        if dilates is None:
+            dilates = [False, False, False, False]
         self.strides = strides
         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
                                bias=False)
@@ -138,8 +141,8 @@ class ResNet(nn.Module):
         self.block_features.append(self.inplanes)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=strides[2],
                                        dilate=dilates[2])
-        if strides[3] > 1:
-            self.block_features.append(self.inplanes)
+        # if strides[3] > 1:
+        self.block_features.append(self.inplanes)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=strides[3],
                                        dilate=dilates[3])
         self.block_features.append(self.inplanes)

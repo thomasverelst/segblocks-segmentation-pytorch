@@ -2,18 +2,20 @@ import os
 import os.path as osp
 import time
 
+import argparser
+import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.optim as optim
 import tqdm
 from easydict import EasyDict as edict
-
-import argparser
-import segblocks
-from segblocks.utils import flopscounter, profiler
 from utils import misc, viz
 from utils.logger import logger
 from utils.losses import BootstrappedCrossEntropyLoss
 from utils.metrics import StreamSegMetrics
+
+import segblocks
+from segblocks.utils import flopscounter, profiler
 
 torch.backends.cudnn.benchmark = True
 
@@ -25,27 +27,29 @@ def train_epochs(C, R):
     for epoch in range(R.progress.epoch + 1, C.epochs):
         R.progress.epoch = epoch
         start = time.perf_counter()
-        with torch.autograd.set_detect_anomaly(False):
-            R = train(C, R)
-        if C.val_every == 0 or epoch % C.val_every == 0 or epoch == C.epochs - 1:
-            R = val(C, R)
+        R = train(C, R)
+        R = val(C, R)
 
-            score = R.metrics["Mean IoU"]
+        score = R.metrics["Mean IoU"]
+        flops = R.metrics.flops
 
-            R.progress.score = score
-            is_best = score > R.progress.score_best
-            if is_best:
-                R.progress.score_best = score
-                R.progress.score_best_epoch = R.progress.epoch
+        R.progress.score = score
+        is_best = score > R.progress.score_best
+        if is_best:
+            R.progress.score_best = score
+            R.progress.score_best_epoch = epoch
+            R.progress.score_best_flops = flops
 
-            R.logger.log_float("metrics/epoch", R.progress.epoch)
-            R.logger.log_float("metrics/score", score)
-            R.logger.log_float("metrics/score_best", R.progress.score_best)
-            R.logger.log_float("metrics/score_best_epoch", R.progress.score_best_epoch)
+        R.logger.log_float("metrics/epoch", R.progress.epoch)
+        R.logger.log_float("metrics/flops", flops / 1e9)
+        R.logger.log_float("metrics/score", score)
+        R.logger.log_float("metrics/score_best", R.progress.score_best)
+        R.logger.log_float("metrics/score_best_epoch", R.progress.score_best_epoch)
+        R.logger.log_float("metrics/score_best_flops", R.progress.score_best_flops / 1e9)
 
-            R = save_checkpoint(C, R)
-            if is_best:
-                R = save_checkpoint(C, R, postfix="_best")
+        R = save_checkpoint(C, R)
+        if is_best:
+            R = save_checkpoint(C, R, postfix="_best")
 
         if R.scheduler:
             R.scheduler.step()
@@ -66,6 +70,24 @@ def train(C, R):
         image = image.to(R.device, dtype=R.dtype, non_blocking=True)
         target = target.to(R.device, dtype=torch.long, non_blocking=True)
 
+        if C.segblocks_policy == "oracle":
+            with torch.no_grad():
+                meta["all_highres"] = True
+                R.model.eval()
+                out_oracle_highres, _ = R.model(image, meta)
+                loss_oracle_highres, loss_per_pixel_oracle_highres = R.loss_function(out_oracle_highres, target.cuda())
+                meta["loss_oracle_highres"] = loss_oracle_highres
+                meta["loss_per_pixel_oracle_highres"] = loss_per_pixel_oracle_highres
+
+                meta["all_highres"] = False
+                meta["all_lowres"] = True
+                out_oracle_lowres, _ = R.model(image, meta)
+                loss_oracle_lowres, loss_per_pixel_oracle_lowres = R.loss_function(out_oracle_lowres, target.cuda())
+                meta["loss_oracle_lowres"] = loss_oracle_lowres
+                meta["loss_per_pixel_oracle_lowres"] = loss_per_pixel_oracle_lowres
+                meta["all_lowres"] = False
+                R.model.train()
+
         out, meta = R.model(image, meta)
 
         loss, loss_per_pixel = R.loss_function(out, target)
@@ -78,7 +100,7 @@ def train(C, R):
             get_blocks_percent = lambda: float(meta["grid"].sum()) / meta["grid"].numel()
             logger.log_float_interval("train/segblocks_block_percent", get_blocks_percent)
             logger.log_float_interval("train/loss_policy", loss_policy)
-            
+
             if "reward_sparsity" in meta:
                 logger.log_float_interval("train/policy_reward_sparsity", meta["reward_sparsity"])
             if "advantage_task" in meta:
@@ -92,6 +114,7 @@ def train(C, R):
         R.logger.log_float_interval("train/loss_total", loss)
 
         R.optimizer.zero_grad(set_to_none=True)
+
         loss.backward()
         R.optimizer.step()
         logger.tick()
@@ -116,9 +139,29 @@ def val(C, R):
         num_blocks_total = 0
 
         for image, target, meta in tqdm.tqdm(R.dataloaders.val, mininterval=10):
-            # if num_images > 10:
-            #     break
             image = image.to(R.device, dtype=R.dtype, non_blocking=True)
+
+            if C.segblocks_policy == "oracle":
+                with torch.no_grad():
+                    R.model.stop_flops_count()
+
+                    meta["all_highres"] = True
+                    R.model.eval()
+                    out_oracle_highres, _ = R.model(image, meta)
+                    loss_oracle_highres, loss_per_pixel_oracle_highres = R.loss_function(
+                        out_oracle_highres, target.cuda()
+                    )
+                    meta["loss_oracle_highres"] = loss_oracle_highres
+                    meta["loss_per_pixel_oracle_highres"] = loss_per_pixel_oracle_highres
+
+                    meta["all_highres"] = False
+                    meta["all_lowres"] = True
+                    out_oracle_lowres, _ = R.model(image, meta)
+                    loss_oracle_lowres, loss_per_pixel_oracle_lowres = R.loss_function(out_oracle_lowres, target.cuda())
+                    meta["loss_oracle_lowres"] = loss_oracle_lowres
+                    meta["loss_per_pixel_oracle_lowres"] = loss_per_pixel_oracle_lowres
+                    meta["all_lowres"] = False
+                    R.model.start_flops_count(only_conv_and_linear=True)
 
             out, meta = R.model(image, meta)
 
@@ -144,7 +187,8 @@ def val(C, R):
         logger.info(f"Metrics: {R.metrics}")
         R.model.stop_flops_count()
         logger.info(R.model.total_flops_cost_repr(submodule_depth=2))
-
+        R.metrics.flops = R.model.compute_average_flops_cost()[0]
+        logger.info(f"GMACS: {R.metrics.flops/1e9}")
         logger.out()
     return R
 
@@ -201,69 +245,61 @@ def speed(C, R):
 
 
 def build_dataset(C, R):
+    import PIL
+    import utils.ext_transforms as et
+    from torch.utils.data import DataLoader
+
     if C["dataset"] == "cityscapes":
         R.logger.subheader("Initializing Cityscapes dataset")
-        import albumentations as A
-        import albumentations.pytorch.transforms as APT
-        import cv2
-        from torch.utils.data import DataLoader
-
         from dataloaders.cityscapes import Cityscapes
 
         R.dataset = {}
         R.dataset.mean = (73.1584 / 255, 82.9090 / 255, 72.3924 / 255)
         R.dataset.std = (44.9149 / 255, 46.1529 / 255, 45.3192 / 255)
+
         R.dataset.num_classes = Cityscapes.num_classes
         R.dataset.class_names = Cityscapes.train_id_to_class_names
         R.dataset.ignore_id = Cityscapes.ignore_id
 
-        h, w = C.res // 2, C.res
-        train_transform = A.Compose(
+        h, w = int(C.res // 2), int(C.res)
+        train_transform = et.ExtCompose(
             [
-                A.augmentations.geometric.rotate.Rotate(
-                    limit=C.rotate,
-                    interpolation=cv2.INTER_LINEAR,
-                    border_mode=cv2.BORDER_CONSTANT,
-                    value=R.dataset.mean,
-                    mask_value=R.dataset.ignore_id,
-                    p=1 if C.rotate > 0 else 0,
-                ),
-                A.RandomScale((-0.5, 1.0), p=1),  # note: albumentations scale factor differs from torchvision
-                A.PadIfNeeded(
-                    min_height=C.crop_res,
-                    min_width=C.crop_res,
-                    border_mode=cv2.BORDER_CONSTANT,
-                    value=R.dataset.mean,
-                    mask_value=R.dataset.ignore_id,
-                ),
-                A.RandomCrop(C.crop_res, C.crop_res),
-                A.ColorJitter(brightness=C.jitter, contrast=C.jitter, saturation=C.jitter, hue=0.1),
-                A.HorizontalFlip(p=0.5),
-                A.Normalize(mean=R.dataset.mean, std=R.dataset.std),
-                APT.ToTensorV2(),
+                et.ExtResize((h, w)),
+                et.ExtRandomRotation(C.rotate, resample=PIL.Image.BILINEAR, prob=1 if C.rotate else 0),
+                et.ExtRandomSquareCropAndScale(wh=int(C.crop_res), mean=R.dataset.mean, ignore_id=0, min=0.5, max=2.0),
+                et.ExtColorJitter(brightness=C.jitter, contrast=C.jitter, saturation=C.jitter, hue=0.1),
+                et.ExtRandomHorizontalFlip(),
+                et.ExtToTensor(),
+                et.ExtNormalize(mean=R.dataset.mean, std=R.dataset.std),
             ]
         )
-        val_transform = A.Compose(
-            [
-                A.Resize(h, w),
-                A.Normalize(mean=R.dataset.mean, std=R.dataset.std),
-                APT.ToTensorV2(),
-            ]
-        )
-        ds_train = Cityscapes(root=C.data_dir, split="train", transform=train_transform, transform_target=True)
-        ds_val = Cityscapes(root=C.data_dir, split="val", transform=val_transform, transform_target=False)
 
-        R.dataloaders = {}
-        R.dataloaders.train = DataLoader(
-            ds_train, batch_size=C.batch_size, shuffle=True, num_workers=C.num_workers, pin_memory=True
+        val_transform = et.ExtCompose(
+            [
+                et.ExtToTensor(),
+                et.ExtNormalize(mean=R.dataset.mean, std=R.dataset.std),
+            ]
         )
-        R.dataloaders.val = DataLoader(
-            ds_val,
-            batch_size=C.batch_size,
-            shuffle=False,
-            num_workers=C.num_workers,
-            pin_memory=C.mode == "speed",
+
+        ds_train = Cityscapes(
+            root=C.cityscapes_data_dir, split="train", transform=train_transform, transform_target=True
         )
+        ds_val = Cityscapes(root=C.cityscapes_data_dir, split="val", transform=val_transform, transform_target=False)
+    else:
+        raise NotImplementedError("Unknown dataset: {}".format(C.dataset))
+
+    R.dataloaders = {}
+    R.dataloaders.train = DataLoader(
+        ds_train, batch_size=C.batch_size, shuffle=True, num_workers=C.num_workers, pin_memory=True
+    )
+    R.dataloaders.val = DataLoader(
+        ds_val,
+        batch_size=C.batch_size,
+        shuffle=False,
+        num_workers=C.num_workers,
+        pin_memory=C.mode == "speed",
+    )
+
     return R
 
 
@@ -327,17 +363,16 @@ def build_model(C, R):
 
 def build_optimizer(C, R):
     R.logger.subheader("Initializing Adam optimizer")
-    import torch.optim as optim
 
     net = R.model.net
 
-    fine_tune_factor = 4 if C.pretrain_backbone else 1
+    fine_tune_factor = C.lr_finetune_factor if C.pretrain_backbone else 1
     optim_params = [
         {"params": net.random_init_params(), "lr": C.lr, "weight_decay": C.weight_decay},
         {
             "params": net.fine_tune_params(),
-            "lr": C.lr / fine_tune_factor,
-            "weight_decay": C.weight_decay / fine_tune_factor,
+            "lr": C.lr * fine_tune_factor,
+            "weight_decay": C.weight_decay * fine_tune_factor,
         },
     ]
 
@@ -350,8 +385,8 @@ def build_optimizer(C, R):
                 "weight_decay": C.weight_decay * C.segblocks_policy_wd_factor,
             }
         )
-
-    R.optimizer = optim.Adam(optim_params, betas=(0.9, 0.99))
+    R.optimizer = optim.Adam(optim_params, betas=(0.5, 0.999))
+    print("optimizer", R.optimizer)
     logger.info(
         f"Optimizer: Adam with lr, fine_tune_factor, weight_decay, epochs: {C.lr}, {fine_tune_factor}, {C.weight_decay}, {C.epochs}"
     )
@@ -362,7 +397,7 @@ def build_scheduler(C, R):
     R.logger.subheader("Initializing CosineAnnealingLR scheduler")
     import torch.optim as optim
 
-    R.scheduler = optim.lr_scheduler.CosineAnnealingLR(R.optimizer, C.epochs, C.lrmin, last_epoch=R.progress.epoch)
+    R.scheduler = optim.lr_scheduler.CosineAnnealingLR(R.optimizer, C.epochs, C.lr_end, last_epoch=R.progress.epoch)
     return R
 
 
@@ -394,26 +429,36 @@ def save_checkpoint(C, R, postfix=""):
     return R
 
 
-def load_checkpoint(C, R):
+def load_checkpoint(C, R, path=None, strict=False, load_optimizer=True):
     logger.subheader("Loading from checkpoint")
-    fn = "checkpoint_best.pth" if C.resume_best else "checkpoint.pth"
-    ckp = os.path.join(R.save_path, fn)
+    if path is None:
+        fn = "checkpoint_best.pth" if C.resume_best else "checkpoint.pth"
+        ckp = os.path.join(R.save_path, fn)
+    else:
+        ckp = path
     if os.path.exists(ckp):
         logger.info(f"> Checkpoint found, loading from {ckp}")
         save_dict = torch.load(ckp)
-        R.model.load_state_dict(save_dict["state_dict"], strict=True)
-        R.optimizer.load_state_dict(save_dict["optimizer"])
-        R.scheduler.load_state_dict(save_dict["scheduler"]) if save_dict["scheduler"] else None
-        logger.step = save_dict["logger_step"]
-        R.progress = save_dict["progress"]
+        R.model.load_state_dict(save_dict["state_dict"], strict=False)
+        if load_optimizer:
+            R.optimizer.load_state_dict(save_dict["optimizer"])
+            R.scheduler.load_state_dict(save_dict["scheduler"]) if save_dict["scheduler"] else None
+            logger.step = save_dict["logger_step"]
+            R.progress = save_dict["progress"]
         logger.info(f"> Loaded checkpoint with epoch {R.progress.epoch} and score {R.progress.score}")
     else:
         logger.info(f"> No checkpoint found in {ckp}")
+        if strict:
+            raise ValueError(f"> Checkpoint not found")
     return R
 
 
 def init():
     torch.manual_seed(0)
+    import random
+
+    random.seed(0)
+    np.random.seed(0)
 
     args = argparser.parse_args()
     C = edict(vars(args))
@@ -430,6 +475,8 @@ def init():
                 "score": 0,
                 "score_best": 0,
                 "score_best_epoch": -1,
+                "flops": -1,
+                "flops_best": -1,
             },
             "metrics": {},
             "save_path": osp.join(SAVE_DIR, C.name),
@@ -453,6 +500,8 @@ def main():
     R = build_optimizer(C, R)
     R = build_scheduler(C, R)
     R = build_loss(C, R)
+    if C.resume:
+        R = load_checkpoint(C, R, path=C.resume, strict=True, load_optimizer=False)
     R = load_checkpoint(C, R)
 
     if C.mode == "train":
@@ -469,9 +518,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import multiprocessing
-
-    multiprocessing.set_start_method("spawn")
-
-    from utils import condor
-    condor.run(main, only_on_condor=False)
+    main()

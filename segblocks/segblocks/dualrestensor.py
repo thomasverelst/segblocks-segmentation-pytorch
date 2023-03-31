@@ -4,6 +4,7 @@ import functools
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from yaml import warnings
 
 from segblocks.utils.profiler import timings
@@ -22,6 +23,9 @@ USE_INTERPOLATION_SPEED_TRICK = True
 
 # use custom batch norm with statistics over both high-res and low-res blocks
 USE_DUALRES_BATCHNORM = True
+
+# bilinear upscaling of low-res regions
+USE_BILINEAR_UPSCALE = True
 
 
 ## helper functions
@@ -276,14 +280,15 @@ class DualResTensor(object):
         """
         with timings.env("dualrestensor/combine"):
             out = torch.empty(self.represented_shape, device=self.highres.device, dtype=self.highres.dtype)
-            out = blockcombine.CombineFunction.apply(
-                out,
-                self.highres,
-                self.lowres,
-                self.metadata.block_idx,
-                self.block_size,
-                self.LOWRES_FACTOR,
-            )
+            if USE_BILINEAR_UPSCALE:
+                lr = F.interpolate(self.lowres, scale_factor=self.LOWRES_FACTOR, mode="bilinear", align_corners=False)
+                out = blockcombine.CombineFunction.apply(
+                    out, self.highres, lr, self.metadata.block_idx, self.block_size, 1
+                )
+            else:
+                out = blockcombine.CombineFunction.apply(
+                    out, self.highres, lr, self.metadata.block_idx, self.block_size, self.LOWRES_FACTOR
+                )
 
         if VERBOSE:
             print(f"DualResTensor.combine: {self.highres.shape} + {self.lowres.shape} -> {out.shape}")

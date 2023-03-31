@@ -66,32 +66,9 @@ def viz_pred(C: dict, R: dict, inputs: torch.Tensor, outputs: torch.Tensor, meta
         denorm = Denormalize(mean=R.dataset.mean, std=R.dataset.std)
         image = (denorm(image) * 255).numpy().transpose(1, 2, 0).astype(np.uint8)  # H, W, C
 
-        pred = R.dataloaders.train.dataset.decode_target(preds[0]).astype(np.uint8)
+        pred = R.dataloaders.train.dataset.decode_target(preds[b]).astype(np.uint8)
 
         alpha = 0.7
         out = cv2.addWeighted(pred, alpha, image, 1 - alpha, 0)
         cv2.imwrite(path, resize(cv2.cvtColor(out, cv2.COLOR_RGB2BGR)))
         R.logger.info("Saved viz of pred to {}".format(path))
-
-
-# def viz_reward(C: dict, R: dict, inputs: torch.Tensor, outputs: torch.Tensor, meta: dict):
-#     advantage = meta['advantage']
-#     for b in range(inputs.shape[0]): # loop over batch dimension
-#         filename = os.path.splitext(meta['file'][b])[0] + '.jpg'
-#         path = os.path.join(R.save_path, 'viz', 'reinforce_advantage', 'advantage_'+filename)
-#         os.makedirs(os.path.dirname(path), exist_ok=True)
-
-#         image = inputs[b].cpu()
-#         denorm = Denormalize(mean=R.dataset.mean, std=R.dataset.std)
-#         image = (denorm(image) * 255).numpy().transpose(1, 2, 0).astype(np.uint8) # H, W, C
-#         image = resize(image)
-
-#         advantage = advantage[b].cpu().numpy()
-#         advantage = advantage - advantage.min()
-#         advantage = advantage / advantage.max()
-#         advantage = cv2.applyColorMap(advantage, cv2.COLORMAP_VIRIDIS)
-
-#         alpha = 0.5
-#         out = cv2.addWeighted(advantage, alpha, image, 1-alpha, 0)
-#         cv2.imwrite(path, out)
-#         R.logger.info('Saved viz of reinforce advantage to {}'.format(path))

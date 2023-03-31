@@ -14,8 +14,6 @@ efficientnet_lite_params = {
     'efficientnet_lite4': [1.4, 1.8, 300, 0.3],
 }
 
-# BN_MOMENTUM = 0.02
-
 def round_filters(filters, multiplier, divisor=8, min_width=None):
     """Calculate and round number of filters based on width multiplier."""
     if not multiplier:
@@ -35,7 +33,6 @@ def round_repeats(repeats, multiplier):
     return int(math.ceil(multiplier * repeats))
 
 def drop_connect(x, drop_connect_rate, training):
-    return x
     if not training:
         return x
     keep_prob = 1.0 - drop_connect_rate
@@ -155,12 +152,9 @@ class EfficientNetLite(nn.Module):
             output_filters = round_filters(output_filters, widthi_multiplier)
             num_repeat = num_repeat if i == 0 or i == len(mb_block_settings) - 1  else round_repeats(num_repeat, depth_multiplier)
             
-
             if stride > 1:
                 self.block_features.append(input_filters)
-                self.block_feature_stage_keep_features.append(True)
-            else:
-                self.block_feature_stage_keep_features.append(False)
+            self.block_feature_stage_keep_features.append(stride > 1)
 
             # The first block needs to take care of stride and filter size increase.
             stage.append(MBConvBlock(input_filters, output_filters, kernal_size, stride, expand_ratio, se_ratio, has_se=False))
@@ -195,25 +189,6 @@ class EfficientNetLite(nn.Module):
         self.fc = torch.nn.Linear(out_channels, num_classes)
 
         self._initialize_weights()
-
-    def forward(self, x):
-        x = self.stem(x)
-        idx = 0
-        for stage in self.blocks:
-            for block in stage:
-                drop_connect_rate = self.drop_connect_rate
-                if drop_connect_rate:
-                    drop_connect_rate *= float(idx) / len(self.blocks)
-                x = block(x, drop_connect_rate)
-                idx +=1
-        x = self.head(x)
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        if self.dropout is not None:
-            x = self.dropout(x)
-        x = self.fc(x)
-
-        return x
 
     def forward_features(self, x):
         x = self.stem(x)
@@ -253,7 +228,7 @@ class EfficientNetLite(nn.Module):
 
 def build_efficientnet_lite(name, num_classes=1000, **kwargs):
     width_coefficient, depth_coefficient, _, dropout_rate = efficientnet_lite_params[name]
-    model = EfficientNetLite(width_coefficient, depth_coefficient, num_classes, 0.2, dropout_rate, **kwargs)
+    model = EfficientNetLite(width_coefficient, depth_coefficient, num_classes, 0, dropout_rate, **kwargs)
     return model
 
 
@@ -297,19 +272,3 @@ def efficientnet_lite3(pretrained=False, **kwargs):
     if pretrained:
         model.load_pretrain(model_urls['efficientnet_lite3'])
     return model
-
-
-
-if __name__ == '__main__':
-    model_name = 'efficientnet_lite0'
-    model = build_efficientnet_lite(model_name, 1000)
-    model.eval()
-
-    # from utils.flops_counter import get_model_complexity_info
-
-    wh = efficientnet_lite_params[model_name][2]
-    input_shape = (3, wh, wh)
-    flops, params = get_model_complexity_info(model, input_shape)
-    split_line = '=' * 30
-    print(f'{split_line}\nInput shape: {input_shape}\n'
-          f'Flops: {flops}\nParams: {params}\n{split_line}')

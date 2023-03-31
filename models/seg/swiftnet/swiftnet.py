@@ -26,7 +26,7 @@ class SwiftNet(nn.Module):
         output_stride=4,
         separable=False,
         upsample_separable=False,
-        scale_factors=[2, 2, 2],
+        scale_factors=None,
         **kwargs
     ):
         super(SwiftNet, self).__init__()
@@ -36,6 +36,9 @@ class SwiftNet(nn.Module):
         up_features = self.backbone.block_features
         self.num_features = num_features
         self.separable = separable
+
+        if scale_factors is None:
+            scale_factors = [2, 2, 2]
 
         self.fine_tune = [self.backbone]
 
@@ -94,7 +97,7 @@ class SwiftNet(nn.Module):
             out_size=num_features,
             grids=spp_grids,
             square_grid=spp_square_grid,
-            bn_momentum=0.01 / 2,
+            bn_momentum=0.005,
             use_bn=True,
             drop_rate=spp_drop_rate,
         )
@@ -127,8 +130,6 @@ class SwiftNet(nn.Module):
         x = segblocks.no_blocks(self.spp)(x)
         for skip, up in zip(features[1:], self.upsample):
             x = up(x, skip)
-
-        # Final logits
         x = self.logits(x)
         return x
 

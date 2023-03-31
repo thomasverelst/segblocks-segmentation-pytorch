@@ -4,7 +4,7 @@ import segblocks
 
 torch.backends.cudnn.benchmark = False
 torch.manual_seed(0)
-torch.use_deterministic_algorithms(True)
+torch.use_deterministic_algorithms(False) # backward of upsample is not compatible
 torch.set_anomaly_enabled(True)
 
 N, C, H, W = 2, 3, 12, 12

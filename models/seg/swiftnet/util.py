@@ -1,4 +1,4 @@
-# swiftnet from https://github.com/orsic/swiftnet
+# SwiftNet from https://github.com/orsic/swiftnet
 import warnings
 
 import torch
@@ -7,7 +7,7 @@ from torch import nn as nn
 from utils.logger import logger
 
 upsample = lambda x, size: F.interpolate(x, size, mode="bilinear")
-BN_MOMENTUM = 0.02
+BN_MOMENTUM = 0.05
 
 
 class SeparableConv2d(nn.Module):
@@ -69,7 +69,9 @@ class _Upsample(nn.Module):
         scale_factor=2.0,
     ):
         super(_Upsample, self).__init__()
-        print(f"Upsample layer: in = {num_maps_in}, skip = {skip_maps_in}, out = {num_maps_out}")
+        print(
+            f"Upsample layer: in = {num_maps_in}, skip = {skip_maps_in}, out = {num_maps_out}, scale_factor = {scale_factor}"
+        )
         self.bottleneck = _BNReluConv(skip_maps_in, num_maps_in, k=1, batch_norm=use_bn and bneck_starts_with_bn)
         self.blend_conv = _BNReluConv(num_maps_in, num_maps_out, k=k, batch_norm=use_bn, separable=separable)
         self.use_skip = use_skip
